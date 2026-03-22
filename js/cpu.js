@@ -50,7 +50,7 @@ export async function doCpuTurn(gameState, useSpellFn, handleTileClickFn, claimS
 
                 await sleep(CPU_THINK_DELAY);
                 // Absolute slot index: CPU is player 1, slots are 5-9
-                useSpellFn(CPU_PLAYER_INDEX * 5 + slotIdx);
+                await useSpellFn(CPU_PLAYER_INDEX * 5 + slotIdx);
                 usedSpell = true;
                 await sleep(CPU_THINK_DELAY);
                 break;
@@ -61,17 +61,14 @@ export async function doCpuTurn(gameState, useSpellFn, handleTileClickFn, claimS
     await sleep(CPU_THINK_DELAY);
 
     // === PHASE 2: MANIPULATION — pick a tile swap to try to match ===
-    if (gameState.turnPhase === 'ACTIVATION' || gameState.turnPhase === 'MANIPULATION') {
+    if (gameState.currentPlayerIndex === CPU_PLAYER_INDEX && (gameState.turnPhase === 'ACTIVATION' || gameState.turnPhase === 'MANIPULATION')) {
         const bestSwap = findBestSwap(gameState.crucible);
         if (bestSwap) {
-            // Click first tile
             handleTileClickFn(bestSwap.r1, bestSwap.c1);
             await sleep(400);
-            // Click second tile
             handleTileClickFn(bestSwap.r2, bestSwap.c2);
             await sleep(CPU_THINK_DELAY);
         } else {
-            // Fallback: random adjacent swap
             const r = Math.floor(Math.random() * 4);
             const c = Math.floor(Math.random() * 5);
             handleTileClickFn(r, c);
@@ -84,21 +81,25 @@ export async function doCpuTurn(gameState, useSpellFn, handleTileClickFn, claimS
     // === PHASE 3: CALLING — after a match, pick from altar ===
     // We wait and poll until the turnPhase becomes 'CALLING'
     let waitCycles = 0;
-    while (gameState.turnPhase !== 'CALLING' && waitCycles < 30) {
+    while (gameState.turnPhase !== 'CALLING' && waitCycles < 20) {
+        if (gameState.currentPlayerIndex !== CPU_PLAYER_INDEX) return;
         await sleep(300);
         waitCycles++;
     }
 
-    while (gameState.turnPhase === 'CALLING') {
+    let safetyCounter = 0;
+    while (gameState.turnPhase === 'CALLING' && safetyCounter < 10) {
+        if (gameState.currentPlayerIndex !== CPU_PLAYER_INDEX) break;
         await sleep(CPU_THINK_DELAY);
         const chosenIdx = pickBestAltarSpell(gameState);
         if (chosenIdx !== -1) {
-            claimSpellFn(chosenIdx);
+            await claimSpellFn(chosenIdx);
         } else {
-            // Nothing available matching required element: pick index 0 (chaos rule)
-            claimSpellFn(0);
+            // Safety: if nothing is found, break to avoid infinite loop
+            break; 
         }
         await sleep(CPU_THINK_DELAY);
+        safetyCounter++;
     }
 }
 
@@ -155,24 +156,25 @@ function simulateSwap(crucible, r1, c1, r2, c2) {
  */
 function pickBestAltarSpell(gameState) {
     const requiredElement = gameState.lastComboElement;
-    const elementAvailable = gameState.altar.some(s => s && s.element === requiredElement);
+    // Note: 'jolly' is a universal match
+    const elementAvailable = gameState.altar.some(s => s && (s.element === requiredElement || s.element === 'jolly'));
 
     if (!elementAvailable) {
-        // Pick first available slot
+        // Chaos Rule: Pick the first available (non-null) slot from the left
         return gameState.altar.findIndex(s => s !== null);
     }
 
     const offensiveSpells = ['fireball', 'poison_dart', 'disintegration', 'thieving_hand', 'ice_seal', 'leech'];
     const altarWithIndex = gameState.altar.map((s, i) => ({ s, i }));
 
-    // First try: offensive spell matching element
+    // Priority 1: Offensive spell matching element (or Jolly)
     for (const { s, i } of altarWithIndex) {
-        if (s && s.element === requiredElement && offensiveSpells.includes(s.id)) return i;
+        if (s && (s.element === requiredElement || s.element === 'jolly') && offensiveSpells.includes(s.id)) return i;
     }
-    // Second try: any matching element
+    // Priority 2: Any matching element (or Jolly)
     for (const { s, i } of altarWithIndex) {
-        if (s && s.element === requiredElement) return i;
+        if (s && (s.element === requiredElement || s.element === 'jolly')) return i;
     }
-    // Fallback
+    // Fallback: First available non-null
     return gameState.altar.findIndex(s => s !== null);
 }

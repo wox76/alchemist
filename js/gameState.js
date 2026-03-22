@@ -6,7 +6,7 @@ export class GameState {
             { id: 1, hp: 40, maxHp: 40, shield: 0, poison: 0, grimoire: [null, null, null, null, null] },
             { id: 2, hp: 40, maxHp: 40, shield: 0, poison: 0, grimoire: [null, null, null, null, null] }
         ];
-        this.currentPlayerIndex = 0;
+        this.currentPlayerIndex = Math.random() < 0.5 ? 0 : 1;
         this.turnPhase = 'ACTIVATION'; // ACTIVATION, MANIPULATION, ANIMATING, CALLING
         this.pendingCalls = 0;
         this.lastComboElement = null;

@@ -13,7 +13,10 @@ tooltipEl.innerHTML = `
     <div class="tooltip-inner">
         <div id="tooltip-icon"></div>
         <h4 id="tooltip-name"></h4>
-        <div id="tooltip-element"></div>
+        <div class="tooltip-header-row">
+            <div id="tooltip-element"></div>
+            <div id="tooltip-type-badge"></div>
+        </div>
         <p id="tooltip-desc"></p>
     </div>
 `;
@@ -29,6 +32,20 @@ function showTooltip(spell) {
     document.getElementById('tooltip-desc').textContent = spell.description;
     document.getElementById('tooltip-icon').style.backgroundImage = `url('${spell.image}')`;
     document.getElementById('tooltip-element').style.backgroundImage = `url('${ELEMENT_ICONS[spell.element]}')`;
+
+    // Type Badge Logic
+    const autoCastSpells = ['fireball', 'disintegration', 'thieving_hand', 'equivalent_exchange', 'ice_seal'];
+    const ttb = document.getElementById('tooltip-type-badge');
+    if (ttb) {
+        if (autoCastSpells.includes(spell.id)) {
+            ttb.className = 'magic-type-badge immediato';
+            ttb.innerHTML = '⚡ Immediato';
+        } else {
+            ttb.className = 'magic-type-badge attivazione';
+            ttb.innerHTML = '✋ Attivazione';
+        }
+    }
+
     tooltipEl.classList.remove('hidden');
     void tooltipEl.offsetWidth;
     tooltipEl.classList.add('visible');
@@ -81,6 +98,23 @@ function setupLongPressTooltip(element, getSpellFn) {
 // ---------------------
 
 const gameState = new GameState();
+
+// Add interceptor for turnPhase to handle UI dimming during CALLING phase
+let _phase = gameState.turnPhase;
+Object.defineProperty(gameState, 'turnPhase', {
+    get() { return _phase; },
+    set(v) {
+        _phase = v;
+        const isCalling = (v === 'CALLING');
+        const cru = document.getElementById('crucible-container');
+        const p1 = document.getElementById('player-1');
+        const p2 = document.getElementById('player-2');
+        if (cru) cru.classList.toggle('dimmed', isCalling);
+        if (p1) p1.classList.toggle('dimmed', isCalling);
+        if (p2) p2.classList.toggle('dimmed', isCalling);
+    }
+});
+
 const crucibleEl = document.getElementById('crucible');
 const altarEl = document.getElementById('altar');
 const p1GrimoireEl = document.querySelector('#player-1 .grimoire');
@@ -105,6 +139,7 @@ async function initUI() {
     renderAltar();
     renderGrimoires();
     updateStats();
+    renderAll();
 
     // Add click listeners to grimoire slots
     document.querySelectorAll('.slot').forEach(slot => {
@@ -117,8 +152,7 @@ async function initUI() {
         };
     });
 
-    addLog("Benvenuti in Alchemist! Inizia il Mago 1.", 0);
-    // Removed playStartAnimation() from here, will be called after Start button
+    // Removed playStartAnimation() and init log from here
 }
 
 function initTitleScreen() {
@@ -248,7 +282,7 @@ async function playStartAnimation() {
     gameState.turnPhase = 'ANIMATING'; // Block clicks
 
     // ROUND 1
-    el.textContent = "ROUND 1";
+    el.innerHTML = '<img src="assets/round1.png" style="max-width: 1000px; height: auto; filter: drop-shadow(0 0 30px rgba(255,204,0,0.5));">';
     el.classList.remove('hidden');
     el.classList.add('sf-animate-in');
     await new Promise(r => setTimeout(r, 1200));
@@ -257,27 +291,41 @@ async function playStartAnimation() {
     el.classList.add('sf-animate-out');
     await new Promise(r => setTimeout(r, 300));
 
-    // FIGHT!
+    // INITIATIVE!
+    const startingPlayerIdx = gameState.currentPlayerIndex;
+    
     el.classList.remove('sf-animate-out');
-    el.textContent = "FIGHT!";
+    if (startingPlayerIdx === 0) {
+        el.innerHTML = '<img src="assets/wizard1_start.png" style="max-width: 1000px; height: auto;">';
+    } else {
+        el.innerHTML = '<img src="assets/wizard2_start.png" style="max-width: 1000px; height: auto;">';
+    }
+    el.style.color = '';
+    el.style.textShadow = '';
     el.classList.add('sf-animate-fight');
-
-    // Screen shake on FIGHT!
-    document.getElementById('game-container').classList.add('earthquake');
-    playSFX('assets/crack.mp3');
-    setTimeout(() => {
-        document.getElementById('game-container').classList.remove('earthquake');
-    }, 500);
-
-    await new Promise(r => setTimeout(r, 1000));
+    
+    await new Promise(r => setTimeout(r, 1500));
 
     el.classList.add('sf-animate-out');
     await new Promise(r => setTimeout(r, 300));
 
     el.classList.add('hidden');
     el.classList.remove('sf-animate-fight', 'sf-animate-out');
+    el.style.color = ''; // Reset color
+    el.style.textShadow = '';
 
     gameState.turnPhase = 'ACTIVATION';
+    renderAll();
+    
+    // Make sure we only log start once
+    if (logEntryCount === 0) {
+        addLog(`Benvenuti in Alchemist! Inizia il Mago ${startingPlayerIdx + 1}. (Puoi attivare le magie nei tuoi slot)`, startingPlayerIdx);
+    }
+
+    // If it's CPU turn at the start, trigger it
+    if (gameMode === 'cpu' && startingPlayerIdx === 1) {
+        await doCpuTurn(gameState, useSpell, handleTileClick, claimSpell);
+    }
 }
 
 function renderCrucible() {
@@ -554,7 +602,7 @@ async function processMatches(matches, casterPlayer) {
         if (bonusDmg > 0) {
             // Use getOpponentOf(casterPlayer) — safe even if currentPlayerIndex drifted
             const opponent = gameState.getOpponentOf(casterPlayer);
-            damagePlayer(opponent, bonusDmg);
+            damagePlayer(opponent, bonusDmg, '⚡');
             addLog(`💥 Combo bonus! <strong>${bonusDmg} danni extra</strong> a Mago ${opponent.id}!`, casterPlayer.id - 1);
             addSubLog(`Totale bonus: ${bonusDmg} (da combo fuori misura)`);
             gameState.turnBonusDamage = 0;
@@ -580,6 +628,7 @@ function renderAltar() {
         const slot = document.createElement('div');
         slot.className = 'altar-slot';
         if (spell) {
+            slot.classList.add(`element-bg-${spell.element}`);
             const icon = document.createElement('div');
             icon.className = 'magic-icon-square';
             icon.style.backgroundImage = `url('${spell.image}')`;
@@ -598,6 +647,17 @@ function renderAltar() {
             elem.className = 'magic-element-icon';
             elem.style.backgroundImage = `url('${ELEMENT_ICONS[spell.element]}')`;
             header.appendChild(elem);
+
+            const autoCastSpells = ['fireball', 'disintegration', 'thieving_hand', 'equivalent_exchange', 'ice_seal'];
+            const typeBadge = document.createElement('div');
+            if (autoCastSpells.includes(spell.id)) {
+                typeBadge.className = 'magic-type-badge immediato';
+                typeBadge.innerHTML = '⚡ Immediato';
+            } else {
+                typeBadge.className = 'magic-type-badge attivazione';
+                typeBadge.innerHTML = '✋ Attivazione';
+            }
+            header.appendChild(typeBadge);
 
             const desc = document.createElement('span');
             desc.className = 'magic-desc-text';
@@ -632,8 +692,9 @@ async function claimSpell(index) {
         return;
     }
 
-    if (!elementAvailable && index !== 0) {
-        addLog(`REGOLA DEL CAOS: Elemento ${requiredElement} non presente, devi prendere la prima in alto!`, gameState.currentPlayerIndex);
+    const firstValidSlot = gameState.altar.findIndex(s => s !== null);
+    if (!elementAvailable && index !== firstValidSlot) {
+        addLog(`REGOLA DEL CAOS: Elemento ${requiredElement} non presente, devi prendere la prima disponibile (posizione ${firstValidSlot + 1})!`, gameState.currentPlayerIndex);
         return;
     }
 
@@ -669,14 +730,22 @@ async function claimSpell(index) {
         if (slotIndex !== -1) {
             await animateSpellTransfer(index, slotIndex, targetPlayer.id - 1, spell, targetType);
 
-            if (targetType === 'fusion') {
-                targetPlayer.grimoire[slotIndex].level++;
-                addLog(`FUSIONE! ${spell.name} ora al livello ${targetPlayer.grimoire[slotIndex].level} per ${recipientName}.`, gameState.currentPlayerIndex);
-                addSubLog(`⬆️ ${recipientName} potenzia <strong>${spell.name}</strong> Lv.${targetPlayer.grimoire[slotIndex].level}`);
+            if (targetPlayer !== player) {
+                if (targetType === 'fusion') {
+                    targetPlayer.grimoire[slotIndex].level++;
+                    addSubLog(`🦠 Mago ${player.id} infligge e potenzia <strong>${spell.name}</strong> a ${recipientName}! (Lv.${targetPlayer.grimoire[slotIndex].level})`);
+                } else {
+                    targetPlayer.grimoire[slotIndex] = { ...spell, level: 1 };
+                    addSubLog(`🦠 Mago ${player.id} assegna <strong>${spell.name}</strong> a ${recipientName}!`);
+                }
             } else {
-                targetPlayer.grimoire[slotIndex] = { ...spell, level: 1 };
-                addLog(`${recipientName} ha scelto <strong>${spell.name}</strong> 💫`, gameState.currentPlayerIndex);
-                addSubLog(`📜 Aggiunto al Grimorio di ${recipientName}`);
+                if (targetType === 'fusion') {
+                    targetPlayer.grimoire[slotIndex].level++;
+                    addSubLog(`💫 ${recipientName} sceglie e potenzia <strong>${spell.name}</strong> (Lv.${targetPlayer.grimoire[slotIndex].level})`);
+                } else {
+                    targetPlayer.grimoire[slotIndex] = { ...spell, level: 1 };
+                    addSubLog(`💫 ${recipientName} sceglie <strong>${spell.name}</strong>`);
+                }
             }
             gameState.altar[index] = null;
 
@@ -688,7 +757,7 @@ async function claimSpell(index) {
 
                 if (counterIndex !== -1) {
                     opponent.grimoire[counterIndex] = null;
-                    addLog(`CONTROINCANTESIMO! La magia (${spell.name}) è stata annullata!`, gameState.currentPlayerIndex);
+                    addSubLog(`🛡️ CONTROINCANTESIMO! La magia (${spell.name}) è stata annullata!`);
                     renderGrimoires();
                 } else {
                     applySpellEffect(spell, player, opponent, slotIndex);
@@ -702,7 +771,7 @@ async function claimSpell(index) {
             }
         } else {
 
-            addLog(`BACKFIRE! Grimorio di ${recipientName} pieno.`, gameState.currentPlayerIndex);
+            addSubLog(`💥 BACKFIRE! Grimorio di ${recipientName} pieno.`);
             applySpellEffect(spell, player, player); // Self-damage
             gameState.altar[index] = null;
         }
@@ -711,13 +780,15 @@ async function claimSpell(index) {
         player.grimoire.forEach(s => {
             if (s && s.id === 'mind_parasite') {
                 const dmg = 1 * s.level;
-                damagePlayer(player, dmg);
-                addLog(`🦠 Il Parassita Mentale si attiva! Punisce Mago ${player.id}.`, gameState.currentPlayerIndex);
-                addSubLog(`☠️ Mago ${player.id} subisce <strong>${dmg} danno</strong>`);
+                damagePlayer(player, dmg, '🦠');
+                updateStats();
+                checkGameOver();
+                if (gameState.turnPhase === 'GAME_OVER') return; // Stop picking if dead
+                addSubLog(`🦠 Il Parassita Mentale si attiva! ☠️ Mago ${player.id} subisce <strong>${dmg} danno</strong>`);
             }
         });
     } else {
-        addLog(`BACKFIRE! Grimorio pieno.`, gameState.currentPlayerIndex);
+        addSubLog(`💥 BACKFIRE! Grimorio pieno.`);
         applySpellEffect(spell, player, player); // Self-damage
         gameState.altar[index] = null;
     }
@@ -805,9 +876,11 @@ function useSpell(slotIndex) {
 
     // --- COUNTERSPELL CHECK ---
     const counterIndex = opponent.grimoire.findIndex(s => s && s.id === 'counterspell');
+    addLog(`Attivazione: ${spell.name}!`, gameState.currentPlayerIndex);
+    
     if (counterIndex !== -1) {
         opponent.grimoire[counterIndex] = null;
-        addLog(`CONTROINCANTESIMO! La magia di Mago ${player.id} è stata annullata!`, gameState.currentPlayerIndex);
+        addSubLog(`🛡️ CONTROINCANTESIMO! La magia di Mago ${player.id} è stata annullata!`);
         player.grimoire[slotIndex % 5] = null; // Spell is consumed
         renderGrimoires();
         checkGameOver();
@@ -815,7 +888,6 @@ function useSpell(slotIndex) {
     }
 
     gameState.turnPhase = 'ANIMATING'; // Block clicks during spell animation/effect
-    addLog(`Attivazione: ${spell.name}!`, gameState.currentPlayerIndex);
     applySpellEffect(spell, player, opponent, slotIndex % 5);
 
 
@@ -878,18 +950,18 @@ function applySpellEffect(spell, caster, target, sourceSlotIndex = -1) {
                 gameState.altar = [null, null, null, null, null];
                 gameState.refillAltar();
                 renderAltar();
-                addLog("🌪️ L'Altare è stato spazzato via dal Soffio del Ciclone!", gameState.currentPlayerIndex);
+                addSubLog("🌪️ L'Altare è stato spazzato via dal Soffio del Ciclone!");
             }, 500);
         }
     };
 
     switch (spell.id) {
         case 'fireball':
-            damagePlayer(target, 5 * power);
+            damagePlayer(target, 5 * power, '🔥');
             addSubLog(`🔥 Infligge <strong>${5 * power} danni</strong> a Mago ${target.id}!`);
             break;
         case 'poison_dart':
-            damagePlayer(target, 2 * power);
+            damagePlayer(target, 2 * power, '🎯');
             target.poison += 1 * power;
             addSubLog(`☠️ <strong>${2 * power} danni</strong> + +${1 * power} veleno a Mago ${target.id}`);
             break;
@@ -898,12 +970,12 @@ function applySpellEffect(spell, caster, target, sourceSlotIndex = -1) {
             addSubLog(`🛡️ Scudo +<strong>${5 * power}</strong> per Mago ${caster.id}`);
             break;
         case 'vital_essence':
-            caster.hp = Math.min(caster.maxHp, caster.hp + 5 * power);
+            healPlayer(caster, 5 * power, '💚');
             addSubLog(`💚 Cura <strong>${5 * power} HP</strong> a Mago ${caster.id}`);
             break;
         case 'leech':
-            damagePlayer(target, 2 * power);
-            caster.hp = Math.min(caster.maxHp, caster.hp + 2 * power);
+            damagePlayer(target, 2 * power, '🩸');
+            healPlayer(caster, 2 * power, '💚');
             addSubLog(`🩸 <strong>${2 * power}</strong> danni a Mago ${target.id}, cura Mago ${caster.id}`);
             break;
         case 'cyclone_breath':
@@ -912,7 +984,7 @@ function applySpellEffect(spell, caster, target, sourceSlotIndex = -1) {
         case 'disintegration':
             if (hasRockGuardian(target)) {
                 triggerRockGuardianEffect(target);
-                addLog(`Il Guardiano di Roccia di Mago ${target.id} blocca la Disintegrazione!`, gameState.currentPlayerIndex);
+                addSubLog(`🛡️ Il Guardiano di Roccia di Mago ${target.id} blocca la Disintegrazione!`);
                 break;
             }
             const activeIndices = [];
@@ -922,15 +994,15 @@ function applySpellEffect(spell, caster, target, sourceSlotIndex = -1) {
                 const randIdx = activeIndices[Math.floor(Math.random() * activeIndices.length)];
                 const destroyedSpell = target.grimoire[randIdx];
                 target.grimoire[randIdx] = null;
-                addLog(`Una magia a caso di Mago ${target.id} (${destroyedSpell.name}) è stata disintegrata!`, gameState.currentPlayerIndex);
+                addSubLog(`💥 Una magia a caso di Mago ${target.id} (${destroyedSpell.name}) è stata disintegrata!`);
             } else {
-                addLog(`Mago ${target.id} non ha magie da disintegrare!`, gameState.currentPlayerIndex);
+                addSubLog(`💨 Mago ${target.id} non ha magie da disintegrare.`);
             }
             break;
         case 'thieving_hand':
             if (hasRockGuardian(target)) {
                 triggerRockGuardianEffect(target);
-                addLog(`Il Guardiano di Roccia di Mago ${target.id} blocca la Mano Ladra!`, gameState.currentPlayerIndex);
+                addSubLog(`🛡️ Il Guardiano di Roccia di Mago ${target.id} blocca la Mano Ladra!`);
                 break;
             }
             const opponentActiveIndices = [];
@@ -949,25 +1021,25 @@ function applySpellEffect(spell, caster, target, sourceSlotIndex = -1) {
                 if (targetSlotIdx !== -1) {
                     caster.grimoire[targetSlotIdx] = { ...stolenSpell, level: 1 };
                     target.grimoire[randOppIdx] = null;
-                    addLog(`Una magia a caso di Mago ${target.id} (${stolenSpell.name}) è stata rubata!`, gameState.currentPlayerIndex);
+                    addSubLog(`✋ Una magia a caso di Mago ${target.id} (${stolenSpell.name}) è stata rubata!`);
                 } else {
-                    addLog("Non hai spazio per rubare la magia!", gameState.currentPlayerIndex);
+                    addSubLog("🚫 Non hai spazio per rubare la magia!");
                 }
             } else {
-                addLog(`Mago ${target.id} non ha magie da rubare!`, gameState.currentPlayerIndex);
+                addSubLog(`💨 Mago ${target.id} non ha magie da rubare.`);
             }
             break;
 
         case 'equivalent_exchange':
             if (hasRockGuardian(target)) {
                 triggerRockGuardianEffect(target);
-                addLog(`Il Guardiano di Roccia di Mago ${target.id} blocca lo Scambio Equivalente!`, gameState.currentPlayerIndex);
+                addSubLog(`🛡️ Il Guardiano di Roccia di Mago ${target.id} blocca lo Scambio Equivalente!`);
                 break;
             }
             {
                 const opponentSpells = target.grimoire.map((s, i) => ({ s, i })).filter(x => x.s !== null);
                 if (opponentSpells.length === 0) {
-                    addLog(`L'avversario non ha magie da scambiare!`, gameState.currentPlayerIndex);
+                    addSubLog(`💨 L'avversario non ha magie da scambiare.`);
                     break;
                 }
                 // Pick a random opponent spell
@@ -983,21 +1055,21 @@ function applySpellEffect(spell, caster, target, sourceSlotIndex = -1) {
                 }
 
                 if (mySlotIdx === -1) {
-                    addLog(`Non hai spazio nel Grimorio per lo Scambio!`, gameState.currentPlayerIndex);
+                    addSubLog(`🚫 Non hai spazio nel Grimorio per lo Scambio!`);
                     break;
                 }
 
                 // Do the swap: give stolen spell to caster, give our spell (equivalent_exchange) to target
                 caster.grimoire[mySlotIdx] = oppSpell;
                 target.grimoire[oppIdx] = { ...spell, level: spell.level || 1 };
-                addLog(`Scambio effettuato: ${spell.name} per ${oppSpell.name} di Mago ${target.id}!`, gameState.currentPlayerIndex);
+                addSubLog(`⚖️ Scambio effettuato: ${spell.name} per ${oppSpell.name} di Mago ${target.id}!`);
             }
             break;
 
         case 'ice_seal':
             if (hasRockGuardian(target)) {
                 triggerRockGuardianEffect(target);
-                addLog(`Il Guardiano di Roccia di Mago ${target.id} blocca il Sigillo di Ghiaccio!`, gameState.currentPlayerIndex);
+                addSubLog(`🛡️ Il Guardiano di Roccia di Mago ${target.id} blocca il Sigillo di Ghiaccio!`);
                 break;
             }
             const iceIndices = [];
@@ -1007,44 +1079,44 @@ function applySpellEffect(spell, caster, target, sourceSlotIndex = -1) {
                 const randIdx = iceIndices[Math.floor(Math.random() * iceIndices.length)];
                 const frozenSpell = target.grimoire[randIdx];
                 target.grimoire[randIdx] = null;
-                addLog(`Una magia a caso di Mago ${target.id} (${frozenSpell.name}) è stata GELLATA e rimossa!`, gameState.currentPlayerIndex);
+                addSubLog(`❄️ Una magia a caso di Mago ${target.id} (${frozenSpell.name}) è stata CONGELATA e rimossa!`);
             } else {
-                addLog(`Mago ${target.id} non ha magie da congelare!`, gameState.currentPlayerIndex);
+                addSubLog(`💨 Mago ${target.id} non ha magie da congelare!`);
             }
             break;
 
         case 'lava_golem':
-            addLog("Golem di Lava evocato! Infliggerà danni ogni turno.", gameState.currentPlayerIndex);
+            addSubLog("🌋 Golem di Lava evocato! Infliggerà danni ogni turno.");
             caster.grimoire[caster.grimoire.findIndex(s => s === null)] = { ...spell, level: 1 }; // Actually happens in claim, but for safety
             break;
         case 'mind_parasite':
             const oppEmptySlot = target.grimoire.findIndex(s => s === null);
             if (oppEmptySlot !== -1) {
                 target.grimoire[oppEmptySlot] = { ...spell, level: power };
-                addLog(`${spell.name} si è attaccato al Grimorio di Mago ${target.id}!`, gameState.currentPlayerIndex);
+                addSubLog(`🦠 ${spell.name} si è attaccato al Grimorio di Mago ${target.id}!`);
             } else {
-                addLog(`Non c'è spazio nel Grimorio di Mago ${target.id} per il ${spell.name}!`, gameState.currentPlayerIndex);
+                addSubLog(`🚫 Non c'è spazio nel Grimorio di Mago ${target.id} per il ${spell.name}!`);
             }
             break;
         case 'rock_guardian':
-            addLog(`${spell.name} attivo! Protegge il tuo Grimorio da Mago ${target.id}.`, gameState.currentPlayerIndex);
+            addSubLog(`🪨 ${spell.name} attivo! Protegge il tuo Grimorio da Mago ${target.id}.`);
             break;
         case 'rusty_scrap':
             if (spell.isClogging) {
-                addLog(`Mago ${caster.id} si è liberato del Rottame Arrugginito!`, gameState.currentPlayerIndex);
+                addSubLog(`🔧 Mago ${caster.id} si è liberato del Rottame Arrugginito!`);
             } else {
                 const emptySlot = target.grimoire.findIndex(s => s === null);
                 if (emptySlot !== -1) {
                     target.grimoire[emptySlot] = { ...spell, level: power, isClogging: true };
-                    addLog(`Hai lanciato un Rottame Arrugginito nel Grimorio di Mago ${target.id}!`, gameState.currentPlayerIndex);
+                    addSubLog(`⚙️ Hai lanciato un Rottame Arrugginito nel Grimorio di Mago ${target.id}!`);
                 } else {
-                    addLog(`Il Grimorio di Mago ${target.id} è pieno, il rottame viene scartato!`, gameState.currentPlayerIndex);
+                    addSubLog(`⚙️ Il Grimorio di Mago ${target.id} è pieno, il rottame viene scartato!`);
                 }
             }
             break;
 
         default:
-            addLog(`Effetto di ${spell.name} non ancora implementato.`, gameState.currentPlayerIndex);
+            addSubLog(`❓ Effetto di ${spell.name} non ancora implementato.`);
     }
     updateStats();
     renderGrimoires();
@@ -1071,7 +1143,7 @@ function triggerRockGuardianEffect(player) {
     }
 }
 
-function damagePlayer(player, amount) {
+function damagePlayer(player, amount, customEmoji = '❤️') {
     const playerIdx = gameState.players.indexOf(player);
     const zoneId = playerIdx === 0 ? 'player-1' : 'player-2';
     const playerZoneEl = document.getElementById(zoneId);
@@ -1096,7 +1168,7 @@ function damagePlayer(player, amount) {
     // === FLOATING DAMAGE NUMBER ===
     if (playerZoneEl) {
         const dmgEl = document.createElement('div');
-        dmgEl.textContent = `-${amount} ❤️`;
+        dmgEl.textContent = `-${amount} ${customEmoji}`;
         const rect = playerZoneEl.getBoundingClientRect();
         dmgEl.style.cssText = `
             position: fixed;
@@ -1121,6 +1193,50 @@ function damagePlayer(player, amount) {
     updateStats();
 }
 
+function healPlayer(player, amount, customEmoji = '💚') {
+    const playerIdx = gameState.players.indexOf(player);
+    const zoneId = playerIdx === 0 ? 'player-1' : 'player-2';
+    const playerZoneEl = document.getElementById(zoneId);
+
+    player.hp = Math.min(player.maxHp, player.hp + amount);
+
+    // === HEAL FLASH VFX ===
+    if (playerZoneEl) {
+        playerZoneEl.animate([
+            { boxShadow: 'inset 0 0 0px green', background: 'rgba(0,0,0,0.3)' },
+            { boxShadow: 'inset 0 0 80px green', background: 'rgba(0,180,0,0.5)' },
+            { boxShadow: 'inset 0 0 0px green', background: 'rgba(0,0,0,0.3)' }
+        ], { duration: 600, easing: 'ease-out' });
+    }
+
+    // === FLOATING HEAL NUMBER ===
+    if (playerZoneEl) {
+        const healEl = document.createElement('div');
+        healEl.textContent = `+${amount} ${customEmoji}`;
+        const rect = playerZoneEl.getBoundingClientRect();
+        healEl.style.cssText = `
+            position: fixed;
+            left: ${rect.left + rect.width / 2}px;
+            top: ${rect.top + rect.height / 2}px;
+            color: #44ff44;
+            font-size: 48px;
+            font-weight: bold;
+            font-family: Roboto, sans-serif;
+            text-shadow: 0 0 20px green, 2px 2px 4px black;
+            pointer-events: none;
+            z-index: 99999;
+            transform: translate(-50%, -50%);
+        `;
+        document.body.appendChild(healEl);
+        healEl.animate([
+            { opacity: 1, transform: 'translate(-50%, -50%) scale(1)' },
+            { opacity: 0, transform: 'translate(-50%, -200%) scale(1.5)' }
+        ], { duration: 1200, easing: 'ease-out', fill: 'forwards' })
+            .finished.then(() => healEl.remove());
+    }
+    updateStats();
+}
+
 function logPendingPicks() {
     if (gameState.pendingElements.length === 0) return;
     const requiredElement = gameState.pendingElements[0];
@@ -1132,9 +1248,9 @@ function logPendingPicks() {
 
     const elementAvailable = gameState.altar.some(s => s && s.element === requiredElement);
     if (!elementAvailable) {
-        addLog(`⚠️ Prendi la prima in alto se non c'è una magia che corrisponde all'elemento <strong>${requiredElement}</strong>!`, gameState.currentPlayerIndex);
+        addSubLog(`⚠️ Prendi la prima in alto se non c'è una magia che corrisponde all'elemento <strong>${requiredElement}</strong>!`);
     } else {
-        addLog(`➡️ Ora scegli una magia di elemento: <strong>${requiredElement}</strong> <img src="${ELEMENT_ICONS[requiredElement]}" style="width:22px;vertical-align:middle;">`, gameState.currentPlayerIndex);
+        addSubLog(`➡️ Ora scegli una magia di elemento: <strong>${requiredElement}</strong> <img src="${ELEMENT_ICONS[requiredElement]}" style="width:22px;vertical-align:middle;">`);
     }
 }
 
@@ -1146,8 +1262,9 @@ function endTurn() {
     activePlayer.grimoire.forEach(spell => {
         if (spell && spell.id === 'lava_golem') {
             const damage = 2 * spell.level;
-            damagePlayer(opponent, damage);
-            addLog(`🔥 Il Golem di Lava di Mago ${activePlayer.id} sputa fuoco! ${damage} danni a Mago ${opponent.id}!`, gameState.currentPlayerIndex);
+            damagePlayer(opponent, damage, '🌋');
+            addLog(`🌋 Il Golem di Lava (Mago ${activePlayer.id}) si attiva!`, gameState.currentPlayerIndex);
+            addSubLog(`🔥 Infligge ${damage} danni a Mago ${opponent.id}!`);
         }
     });
 
@@ -1160,19 +1277,20 @@ function endTurn() {
     // 2. Process poison for the NEXT player
     const nextPlayer = gameState.getCurrentPlayer();
     if (nextPlayer.poison > 0) {
-        damagePlayer(nextPlayer, nextPlayer.poison);
-        addLog(`Danni da veleno: ${nextPlayer.poison}`, gameState.currentPlayerIndex);
+        damagePlayer(nextPlayer, nextPlayer.poison, '☠️');
+        addLog(`☠️ Veleno attivo su Mago ${nextPlayer.id}`, gameState.currentPlayerIndex);
+        addSubLog(`💥 Subisce ${nextPlayer.poison} danni da veleno`);
     }
 
     renderAll();
-    addLog(`È il turno del Mago ${gameState.currentPlayerIndex + 1}.`, gameState.currentPlayerIndex);
+    addLog(`È il turno del Mago ${gameState.currentPlayerIndex + 1}. (Puoi attivare le magie nei tuoi slot)`, gameState.currentPlayerIndex);
 
     // Check game over after end-of-turn effects
-    setTimeout(() => {
+    setTimeout(async () => {
         checkGameOver();
         // If it's now the CPU's turn, trigger AI
         if (gameMode === 'cpu' && gameState.currentPlayerIndex === 1 && gameState.turnPhase !== 'GAME_OVER') {
-            doCpuTurn(gameState, useSpell, handleTileClick, claimSpell);
+            await doCpuTurn(gameState, useSpell, handleTileClick, claimSpell);
         }
     }, 1000);
 }
@@ -1195,9 +1313,13 @@ function checkGameOver() {
     });
 
     if (winnerIdx !== -1) {
-        const winnerName = `MAGO ${winnerIdx + 1}`;
         const announcement = document.getElementById('turn-announcement');
-        announcement.innerHTML = `🏆 ${winnerName} 🏆<br>VINCITORE!<br><span class="replay-hint">Clicca per rigiocare</span>`;
+        
+        if (winnerIdx === 0) {
+            announcement.innerHTML = `<img src="assets/wizard1_wins.png" style="max-width: 1000px; height: auto; filter: drop-shadow(0 0 30px rgba(255,204,0,0.5));"><br><span class="replay-hint">Clicca per rigiocare</span>`;
+        } else {
+            announcement.innerHTML = `<img src="assets/wizard2_wins.png" style="max-width: 1000px; height: auto; filter: drop-shadow(0 0 30px rgba(255,204,0,0.5));"><br><span class="replay-hint">Clicca per rigiocare</span>`;
+        }
         announcement.className = 'victory'; // Applying the new style
         announcement.style.display = 'flex';
         announcement.style.cursor = 'pointer';
@@ -1215,11 +1337,16 @@ function renderGrimoires() {
         const slots = el.querySelectorAll('.slot');
         gameState.players[pIdx].grimoire.forEach((item, i) => {
             const absoluteIdx = pIdx * 5 + i; // Added absoluteIdx
+
+            // Clean up element border classes and equipped
+            slots[i].classList.remove('equipped', 'element-border-fire', 'element-border-water', 'element-border-earth', 'element-border-air', 'element-border-jolly');
+
             if (item) {
                 slots[i].style.backgroundImage = `url('${item.image}')`;
                 slots[i].style.backgroundSize = 'cover';
                 slots[i].style.backgroundPosition = 'center';
                 slots[i].classList.add('equipped');
+                slots[i].classList.add(`element-border-${item.element}`);
                 slots[i].innerHTML = `
                     <div class="magic-card-overlay">
                         <span class="card-level">Lv.${item.level}</span>
@@ -1353,7 +1480,7 @@ function addSubLog(msg) {
     const li = document.createElement('li');
     li.className = 'log-subitem';
     li.innerHTML = msg;
-    subList.appendChild(li);
+    subList.prepend(li);
 }
 
 function createParticles(x, y, element) {

@@ -2,7 +2,8 @@ export const ELEMENTS = {
     FIRE: 'fire',
     WATER: 'water',
     EARTH: 'earth',
-    AIR: 'air'
+    AIR: 'air',
+    JOLLY: 'jolly'
 };
 
 export const ELEMENT_ICONS = {
@@ -10,7 +11,7 @@ export const ELEMENT_ICONS = {
     [ELEMENTS.WATER]: 'assets/acqua.png',
     [ELEMENTS.EARTH]: 'assets/terra.png',
     [ELEMENTS.AIR]: 'assets/aria.png',
-    JOLLY: 'assets/jolly.png'
+    [ELEMENTS.JOLLY]: 'assets/jolly.png'
 };
 
 export const SPELLS = [
