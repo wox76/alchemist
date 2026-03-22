@@ -2,7 +2,10 @@
 
 ![Alchemist Logo](assets/title.jpg)
 
+### 🎮 [GIOCA ORA SU GITHUB PAGES](https://wox76.github.io/alchemist/)
+
 **Alchemist** è un gioco di strategia e duello magico per due giocatori. Sfidatevi manipolando le energie di un antico calderone condiviso, reclamate potenti magie e gestite con cura il vostro Grimorio per non soccombere al pericoloso *Backfire*.
+
 
 ---
 
